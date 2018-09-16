@@ -2265,7 +2265,8 @@ class SQLFORM(FORM):
              auto_pagination=True,
              use_cursor=False,
              represent_none=None,
-             showblobs=False):
+             showblobs=False,
+             add_button_text="Add record"):
 
         dbset = None
         formstyle = formstyle or current.response.formstyle
@@ -2713,7 +2714,7 @@ class SQLFORM(FORM):
         if create:
             add = gridbutton(
                 buttonclass='buttonadd',
-                buttontext=T('Add Record'),
+                buttontext=T(add_button_text),
                 title=T("Add record to database"),
                 buttonurl=url(args=['new', tablename]))
             if not searchable:
