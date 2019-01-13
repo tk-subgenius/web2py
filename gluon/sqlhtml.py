@@ -1167,12 +1167,21 @@ def formstyle_bootstrap4_inline_factory(col_label_size=3):
                 elif controls['_type'] in ('text', 'password'):
                     controls.add_class('form-control')
                 elif controls['_type'] == 'checkbox' or controls['_type'] == 'radio':
+
+                    foo="""<div class="form-check form-check-inline">
+                              <input class="form-check-input" type="checkbox" id="inlineCheckbox2" value="option2">
+                              <label class="form-check-label" for="inlineCheckbox2">2</label>
+                            </div>"""
+                    print("now here")
                     controls.add_class('form-check-input')
                     label.add_class('form-check-label')
-                    label.insert(0, controls)
+                    # label.insert(0, controls)
                     #label.insert(0, ' ')
-                    _controls = DIV(DIV(label, _help, _class="form-check"), _class="%s" % col_class)
-                    label = DIV(_class="sm-hidden %s" % label_col_class)
+                    inline_control = DIV(controls, _help, _class="form-check form-check-inline")
+                    # inline_control.insert(0,)
+                    # inline_control.insert(0,label)
+                    _controls = DIV(inline_control, _class="sm-hidden %s" % label_col_class)
+                    # label = DIV(_class="sm-hidden %s" % label_col_class)
                 elif isinstance(controls, (SELECT, TEXTAREA)):
                     controls.add_class('form-control')
 
@@ -1187,7 +1196,7 @@ def formstyle_bootstrap4_inline_factory(col_label_size=3):
             if isinstance(label, LABEL):
                 label['_class'] = add_class(label.get('_class'), 'form-control-label %s' % label_col_class)
 
-            parent.append(DIV(label, _controls, _class='form-group row', _id=id))
+            parent.append(DIV( label, _controls, _class='form-group row', _id=id))
         return parent
     return _inner
 
