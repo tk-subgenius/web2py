@@ -1168,11 +1168,6 @@ def formstyle_bootstrap4_inline_factory(col_label_size=3):
                     controls.add_class('form-control')
                 elif controls['_type'] == 'checkbox' or controls['_type'] == 'radio':
 
-                    foo="""<div class="form-check form-check-inline">
-                              <input class="form-check-input" type="checkbox" id="inlineCheckbox2" value="option2">
-                              <label class="form-check-label" for="inlineCheckbox2">2</label>
-                            </div>"""
-                    print("now here")
                     controls.add_class('form-check-input')
                     label.add_class('form-check-label')
                     # label.insert(0, controls)
@@ -2275,7 +2270,8 @@ class SQLFORM(FORM):
              use_cursor=False,
              represent_none=None,
              showblobs=False,
-             add_button_text="Add record"):
+             add_button_text="Add record",
+             add_button_url=None):
 
         dbset = None
         formstyle = formstyle or current.response.formstyle
@@ -2721,11 +2717,15 @@ class SQLFORM(FORM):
         console = DIV(_class='web2py_console %(header)s %(cornertop)s' % ui)
         error = None
         if create:
+            if add_button_url is None:
+                buttonurl = url(args=['new', tablename])
+            else:
+                buttonurl = add_button_url
             add = gridbutton(
                 buttonclass='buttonadd',
                 buttontext=T(add_button_text),
                 title=T("Add record to database"),
-                buttonurl=url(args=['new', tablename]))
+                buttonurl=buttonurl)
             if not searchable:
                 console.append(add)
         else:
