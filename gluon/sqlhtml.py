@@ -2274,7 +2274,15 @@ class SQLFORM(FORM):
              add_button_url=None,
              view_url_custom=False,
              view_url_base = None,
-             links_in_details=True):
+             links_in_details=True,
+             filter_callback = None,
+             additional_buttons = None,
+             # selectable_submit_feedback = None,
+            ):
+
+
+        if filter_callback is not None:
+            paginate = False
 
         dbset = None
         formstyle = formstyle or current.response.formstyle
@@ -2780,6 +2788,9 @@ class SQLFORM(FORM):
             nrows = 0
             error = T('Unsupported query')
 
+        if additional_buttons is not None:
+            console.append(DIV(additional_buttons))
+
         order = request.vars.order or ''
         if sortable:
             if order and not order == 'None':
@@ -2899,6 +2910,8 @@ class SQLFORM(FORM):
                 message = T('%(nrows)s records found') % dict(nrows=nrows)
         console.append(DIV(message or '', _class='web2py_counter'))
 
+
+
         paginator = UL()
         if paginate and dbset._db._adapter.dbengine == 'google:datastore' and use_cursor:
             # this means we may have a large table with an unknown number of rows.
@@ -2967,6 +2980,11 @@ class SQLFORM(FORM):
             numrec = 0
             repr_cache = CacheRepresenter()
             for row in rows:
+                if filter_callback is not None:
+                    if not filter_callback(row):
+                        continue
+
+
                 trcols = []
                 id = row[field_id]
                 if selectable:
@@ -3092,7 +3110,7 @@ class SQLFORM(FORM):
                         input_ctrl.add_class(submit_class)
                         inputs.append(input_ctrl)
                 else:
-                    inputs = [INPUT(_type="submit", _value=T(selectable_submit_button))]
+                    inputs = [INPUT(_type="submit",_class="btn btn-default btn-secondary", _value=T(selectable_submit_button))]
 
                 if formstyle == 'bootstrap':
                     # add space between buttons
@@ -3114,6 +3132,9 @@ class SQLFORM(FORM):
                                 break
                     else:
                         selectable(records)
+                    # if selectable_submit_feedback is not None:
+                        # session.flash(selectable_submit_feedback(records))
+
                     redirect(referrer)
         else:
             htmltable = DIV(T('No records found'))
