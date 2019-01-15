@@ -2271,7 +2271,10 @@ class SQLFORM(FORM):
              represent_none=None,
              showblobs=False,
              add_button_text="Add record",
-             add_button_url=None):
+             add_button_url=None,
+             view_url_custom=False,
+             view_url_base = None,
+             links_in_details=True):
 
         dbset = None
         formstyle = formstyle or current.response.formstyle
@@ -2503,7 +2506,7 @@ class SQLFORM(FORM):
                 args = ['view', table._tablename, request.args[-1]]
                 buttons.append(gridbutton('buttonview', 'View',
                                           url(args=args)))
-            if record and links:
+            if record and links and links_in_details:
                 for link in links:
                     if isinstance(link, dict):
                         buttons.append(link['body'](record))
@@ -3035,9 +3038,13 @@ class SQLFORM(FORM):
 
                 if include_buttons_column:
                     if details and (not callable(details) or details(row)):
+                        if view_url_custom:
+                            view_url = view_url_base+str(id)
+                        else:
+                            view_url = url(args=['view', tablename, id])
                         row_buttons.append(gridbutton(
                             'buttonview', 'View',
-                            url(args=['view', tablename, id])))
+                            view_url))
                     if editable and (not callable(editable) or editable(row)):
                         row_buttons.append(gridbutton(
                             'buttonedit', 'Edit',
