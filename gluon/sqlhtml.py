@@ -2259,7 +2259,7 @@ class SQLFORM(FORM):
              createargs={},
              editargs={},
              viewargs={},
-             selectable_submit_button='Submit',
+             selectable_submit_button_text='Submit',
              buttons_placement = 'right',
              links_placement = 'right',
              noconfirm=False,
@@ -2277,6 +2277,8 @@ class SQLFORM(FORM):
              links_in_details=True,
              filter_callback = None,
              additional_buttons = None,
+             selectable_select_all = False,
+             selectable_submit_button = None
              # selectable_submit_feedback = None,
             ):
 
@@ -2804,7 +2806,14 @@ class SQLFORM(FORM):
 
         headcols = []
         if selectable:
-            headcols.append(TH(_class=ui.get('default')))
+            if selectable_select_all:
+                if "bootstrap" in formstyle:
+                    headcols.append(TH(INPUT(data={'_data-toggle':"tooltip"}, _title="Select all records", _type='checkbox',_onClick="grid_checkbox_toggle(this)", _name='grid_select_all', value=False),_class=ui.get('default')))
+                else:
+                    headcols.append(TH(INPUT( _type='checkbox',_onClick="grid_checkbox_toggle(this)", _name='grid_select_all', value=False),_class=ui.get('default')))
+
+            else:
+                headcols.append(TH(_class=ui.get('default')))
 
         ordermatch, marker = orderby, ''
         if orderby:
@@ -2989,8 +2998,7 @@ class SQLFORM(FORM):
                 id = row[field_id]
                 if selectable:
                     trcols.append(
-                        INPUT(_type="checkbox", _name="records", _value=id,
-                              value=request.vars.records))
+                        INPUT(_type="checkbox", _name="records", _value=id,_class="grid_select_checkbox",value=request.vars.records))
                 for field in columns:
                     if not field.readable:
                         continue
@@ -3109,18 +3117,21 @@ class SQLFORM(FORM):
                         input_ctrl = INPUT(_type="submit", _name='submit_%d' % i, _value=T(submit_text))
                         input_ctrl.add_class(submit_class)
                         inputs.append(input_ctrl)
+                elif selectable_submit_button is not None:
+                    inputs = [selectable_submit_button]
                 else:
-                    inputs = [INPUT(_type="submit",_class="btn btn-default btn-secondary", _value=T(selectable_submit_button))]
+                    inputs = [INPUT(_type="submit",_class="btn btn-default btn-secondary", _value=T(selectable_submit_button_text))]
 
                 if formstyle == 'bootstrap':
                     # add space between buttons
                     htmltable = FORM(htmltable, DIV(_class='form-actions', *inputs))
                 elif not callable(formstyle) and 'bootstrap' in formstyle: # Same for bootstrap 3 & 4
-                     htmltable = FORM(htmltable, DIV(_class='form-group web2py_table_selectable_actions', *inputs))
+                     htmltable = FORM(htmltable, DIV(DIV(*inputs, _class="col-sm-8"), _class='form-group row web2py_table_selectable_actions' ),_id="web2py_grid_form")
                 else:
                     htmltable = FORM(htmltable, *inputs)
 
                 if htmltable.process(formname=formname).accepted:
+                    
                     htmltable.vars.records = htmltable.vars.records or []
                     htmltable.vars.records = htmltable.vars.records if isinstance(htmltable.vars.records, list) else [htmltable.vars.records]
                     records = [int(r) for r in htmltable.vars.records]
@@ -3173,6 +3184,26 @@ class SQLFORM(FORM):
         res.search_form = search_form
         res.rows = rows
         res.dbset = dbset
+        if selectable_select_all:
+            select_script = """
+                        function grid_checkbox_toggle(source) {
+                          checkboxes = document.getElementsByClassName('grid_select_checkbox');
+                          for(var i=0, n=checkboxes.length;i<n;i++) {
+                            checkboxes[i].checked = source.checked;
+                          }
+                        }
+
+                    """
+            tooltip_script = """
+                $(document).ready(function(){
+                      $('[data-toggle="tooltip"]').tooltip();
+                    });
+                            """
+            if "bootstrap" in formstyle:
+                script = select_script +tooltip_script
+            else:
+                script = select_script
+            res.insert(0,SCRIPT(script, _type='text/javascript'))
         return res
 
     @staticmethod
@@ -3386,6 +3417,8 @@ class SQLFORM(FORM):
             grid.insert(
                 0, DIV(UL(*breadcrumbs, **{'_class': breadcrumbs_class}),
                        _class='web2py_breadcrumbs'))
+
+
         return grid
 
 
