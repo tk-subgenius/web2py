@@ -3053,7 +3053,7 @@ class SQLFORM(FORM):
                     toadd = []
                     for link in links:
                         if isinstance(link, dict):
-                            toadd.append(TD(link['body'](row)))
+                            toadd.append(TD(link['body'](row),_class='row_buttons', _nowrap=True))
                         else:
                             if link(row):
                                 row_buttons.append(link(row))
