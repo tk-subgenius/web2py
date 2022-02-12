@@ -5,14 +5,14 @@
 # Modified by Massimo Di Pierro
 
 # Import System Modules
-from __future__ import print_function
+
 import sys
 import errno
 import socket
 import logging
 import platform
-from gluon._compat import iteritems, to_bytes, StringIO
-from gluon._compat import urllib_unquote, to_native
+from gluon._compat import iteritems, to_bytes, to_unicode, StringIO
+from gluon._compat import urllib_unquote, to_native, PY2
 
 # Define Constants
 VERSION = '1.2.6'
@@ -23,7 +23,11 @@ HTTP_SERVER_SOFTWARE = '%s Python/%s' % (
 BUF_SIZE = 16384
 SOCKET_TIMEOUT = 10  # in secs
 THREAD_STOP_CHECK_INTERVAL = 1  # in secs, How often should threads check for a server stop message?
-IS_JYTHON = platform.system() == 'Java'  # Handle special cases for Jython
+if hasattr(sys, 'frozen'):
+    # py2installer
+    IS_JYTHON = False
+else:
+    IS_JYTHON = platform.system() == 'Java'  # Handle special cases for Jython
 IGNORE_ERRORS_ON_CLOSE = set([errno.ECONNABORTED, errno.ECONNRESET])
 DEFAULT_LISTEN_QUEUE_SIZE = 5
 DEFAULT_MIN_THREADS = 10
@@ -32,7 +36,7 @@ DEFAULTS = dict(LISTEN_QUEUE_SIZE=DEFAULT_LISTEN_QUEUE_SIZE,
                 MIN_THREADS=DEFAULT_MIN_THREADS,
                 MAX_THREADS=DEFAULT_MAX_THREADS)
 
-PY3K = sys.version_info[0] > 2
+PY3K = not PY2
 
 
 class NullHandler(logging.Handler):
@@ -40,39 +44,8 @@ class NullHandler(logging.Handler):
     def emit(self, record):
         pass
 
-if PY3K:
-    def b(val):
-        """ Convert string/unicode/bytes literals into bytes.  This allows for
-        the same code to run on Python 2.x and 3.x. """
-        if isinstance(val, str):
-            return val.encode()
-        else:
-            return val
-
-    def u(val, encoding="us-ascii"):
-        """ Convert bytes into string/unicode.  This allows for the
-        same code to run on Python 2.x and 3.x. """
-        if isinstance(val, bytes):
-            return val.decode(encoding)
-        else:
-            return val
-
-else:
-    def b(val):
-        """ Convert string/unicode/bytes literals into bytes.  This allows for
-        the same code to run on Python 2.x and 3.x. """
-        if isinstance(val, unicode):
-            return val.encode()
-        else:
-            return val
-
-    def u(val, encoding="us-ascii"):
-        """ Convert bytes into string/unicode.  This allows for the
-        same code to run on Python 2.x and 3.x. """
-        if isinstance(val, str):
-            return val.decode(encoding)
-        else:
-            return val
+b = to_bytes
+u = to_unicode
 
 # Import Package Modules
 # package imports removed in monolithic build
@@ -524,6 +497,7 @@ class Listener(Thread):
                 ca_certs = self.interface[4]
                 cert_reqs = ssl.CERT_OPTIONAL
                 sock = ssl.wrap_socket(sock,
+                                       do_handshake_on_connect=False,
                                        keyfile=self.interface[2],
                                        certfile=self.interface[3],
                                        server_side=True,
@@ -532,6 +506,7 @@ class Listener(Thread):
                                        ssl_version=ssl.PROTOCOL_SSLv23)
             else:
                 sock = ssl.wrap_socket(sock,
+                                       do_handshake_on_connect=False,
                                        keyfile=self.interface[2],
                                        certfile=self.interface[3],
                                        server_side=True,
@@ -549,7 +524,7 @@ class Listener(Thread):
             self.err_log.warning('Listener started when not ready.')
             return
 
-        if self.thread is not None and self.thread.isAlive():
+        if self.thread is not None and self.thread.is_alive():
             self.err_log.warning('Listener already running.')
             return
 
@@ -557,11 +532,11 @@ class Listener(Thread):
 
         self.thread.start()
 
-    def isAlive(self):
+    def is_alive(self):
         if self.thread is None:
             return False
 
-        return self.thread.isAlive()
+        return self.thread.is_alive()
 
     def join(self):
         if self.thread is None:
@@ -613,9 +588,9 @@ import socket
 import logging
 import traceback
 from threading import Lock
-try:
+if PY3K:
     from queue import Queue
-except ImportError:
+else:
     from Queue import Queue
 
 # Import Package Modules
@@ -740,14 +715,14 @@ class Rocket(object):
         if background:
             return
 
-        while self._monitor.isAlive():
+        while self._monitor.is_alive():
             try:
                 time.sleep(THREAD_STOP_CHECK_INTERVAL)
             except KeyboardInterrupt:
                 # Capture a keyboard interrupt when running from a console
                 break
             except:
-                if self._monitor.isAlive():
+                if self._monitor.is_alive():
                     log.error(traceback.format_exc())
                     continue
 
@@ -767,12 +742,12 @@ class Rocket(object):
             time.sleep(0.01)
 
             for l in self.listeners:
-                if l.isAlive():
+                if l.is_alive():
                     l.join()
 
             # Stop Monitor
             self._monitor.stop()
-            if self._monitor.isAlive():
+            if self._monitor.is_alive():
                 self._monitor.join()
 
             # Stop Worker threads
@@ -1082,14 +1057,14 @@ class ThreadPool:
             self.app_info['executor'].shutdown(wait=False)
 
         # Give them the gun
-        # active_threads = [t for t in self.threads if t.isAlive()]
+        # active_threads = [t for t in self.threads if t.is_alive()]
         # while active_threads:
         #     t = active_threads.pop()
         #     t.kill()
 
         # Wait until they pull the trigger
         for t in self.threads:
-            if t.isAlive():
+            if t.is_alive():
                 t.join()
 
         # Clean up the mess
@@ -1098,7 +1073,7 @@ class ThreadPool:
     def bring_out_your_dead(self):
         # Remove dead threads from the pool
 
-        dead_threads = [t for t in self.threads if not t.isAlive()]
+        dead_threads = [t for t in self.threads if not t.is_alive()]
         for t in dead_threads:
             if __debug__:
                 log.debug("Removing dead thread: %s." % t.getName())
@@ -1659,6 +1634,7 @@ class WSGIWorker(Worker):
             environ['wsgi.url_scheme'] = 'https'
             environ['HTTPS'] = 'on'
             try:
+                conn.socket.do_handshake()
                 peercert = conn.socket.getpeercert(binary_form=True)
                 environ['SSL_CLIENT_RAW_CERT'] = \
                     peercert and to_native(ssl.DER_cert_to_PEM_cert(peercert))

@@ -13,9 +13,10 @@ OAuth 2.0 spec: http://tools.ietf.org/html/rfc6749
 
 import time
 import cgi
-import urllib2
 
-from urllib import urlencode
+from gluon._compat import urllib2
+from gluon._compat import urlencode
+
 from gluon import current, redirect, HTTP
 
 import json
@@ -173,7 +174,7 @@ server for requests.  It can be used for the optional"scope" parameters for Face
             open_url = None
             opener = self.__build_url_opener(self.token_url)
             try:
-                open_url = opener.open(self.token_url, urlencode(data), self.socket_timeout)
+                open_url = opener.open(self.token_url, urlencode(data).encode(), self.socket_timeout)
             except urllib2.HTTPError as e:
                 tmp = e.read()
                 raise Exception(tmp)
@@ -184,7 +185,13 @@ server for requests.  It can be used for the optional"scope" parameters for Face
             if open_url:
                 try:
                     data = open_url.read()
-                    resp_type = open_url.info().gettype()
+
+                    try:
+                        resp_type = open_url.info().get_content_type()
+                    except:
+                        # Old python 2 version. This does not work for python3
+                        resp_type = open_url.info().gettype()
+
                     # try json style first
                     if not resp_type or resp_type[:16] == 'application/json':
                         try:

@@ -9,7 +9,6 @@
 Template helpers
 --------------------------------------------
 """
-from __future__ import print_function
 
 import cgi
 import os
@@ -18,25 +17,50 @@ import copy
 import types
 import urllib
 import base64
-from gluon import sanitizer, decoder
 import itertools
-from gluon._compat import reduce, pickle, copyreg, HTMLParser, name2codepoint, iteritems, unichr, unicodeT, \
+from pydal._compat import PY2, reduce, pickle, copyreg, HTMLParser, name2codepoint, iteritems, unichr, unicodeT, \
     urllib_quote, to_bytes, to_native, to_unicode, basestring, urlencode, implements_bool, text_type, long
-from gluon.utils import local_html_escape
+from yatl import sanitizer
 import marshal
 
+from gluon import decoder
 from gluon.storage import Storage
-from gluon.utils import web2py_uuid, simple_hash, compare
+from gluon.utils import web2py_uuid, compare
 from gluon.highlight import highlight
+from gluon.validators import simple_hash
 
+
+def local_html_escape(data, quote=False):
+    """
+    Works with bytes.
+    Replace special characters "&", "<" and ">" to HTML-safe sequences.
+    If the optional flag quote is true (the default), the quotation mark
+    characters, both double quote (") and single quote (') characters are also
+    translated.
+    """
+    if PY2:
+        import cgi
+        data = cgi.escape(data, quote)
+        return data.replace("'", "&#x27;") if quote else data
+    else:
+        import html
+        if isinstance(data, str):
+            return html.escape(data, quote=quote)
+        data = data.replace(b"&", b"&amp;")  # Must be done first!
+        data = data.replace(b"<", b"&lt;")
+        data = data.replace(b">", b"&gt;")
+        if quote:
+            data = data.replace(b'"', b"&quot;")
+            data = data.replace(b'\'', b"&#x27;")
+        return data
 
 regex_crlf = re.compile('\r|\n')
 
 join = ''.join
 
 # name2codepoint is incomplete respect to xhtml (and xml): 'apos' is missing.
-entitydefs = dict(map(lambda k_v: (k_v[0], unichr(k_v[1]).encode('utf-8')), iteritems(name2codepoint)))
-entitydefs.setdefault('apos', u"'".encode('utf-8'))
+entitydefs = dict([(k_v[0], to_bytes(unichr(k_v[1]))) for k_v in iteritems(name2codepoint)])
+entitydefs.setdefault('apos', to_bytes("'"))
 
 
 __all__ = [
@@ -166,7 +190,8 @@ def URL(a=None,
         port=None,
         encode_embedded_slash=False,
         url_encode=True,
-        language=None
+        language=None,
+        hash_extension=True
         ):
     """
     generates a url '/a/c/f' corresponding to application a, controller c
@@ -315,7 +340,8 @@ def URL(a=None,
         if '.' in function:
             function, extension = function.rsplit('.', 1)
 
-    function2 = '%s.%s' % (function, extension or 'html')
+    # only include the extension as part of the variables for the hash if requested
+    function2 = '%s.%s' % (function, extension or 'html') if hash_extension else function
 
     if not (application and controller and function):
         raise SyntaxError('not enough information to build the url (%s %s %s)' % (application, controller, function))
@@ -392,7 +418,7 @@ def URL(a=None,
     return url
 
 
-def verifyURL(request, hmac_key=None, hash_vars=True, salt=None, user_signature=None):
+def verifyURL(request, hmac_key=None, hash_vars=True, salt=None, user_signature=None, hash_extension=True):
     """
     Verifies that a request's args & vars have not been tampered with by the user
 
@@ -453,10 +479,19 @@ def verifyURL(request, hmac_key=None, hash_vars=True, salt=None, user_signature=
 
     # always include all of the args
     other = args and urllib_quote('/' + '/'.join([str(x) for x in args])) or ''
-    h_args = '/%s/%s/%s.%s%s' % (request.application,
+    
+    # decide whether the extension should be part of the hash verification
+    h_extension = request.extension if hash_extension else ''
+
+    # only add a period to the extension when it exists otherwise empty
+    # extensions will fail to validate
+    if h_extension:
+        h_extension = '.%s' % (h_extension)
+        
+    h_args = '/%s/%s/%s%s%s' % (request.application,
                                  request.controller,
                                  request.function,
-                                 request.extension,
+                                 h_extension,
                                  other)
 
     # but only include those vars specified (allows more flexibility for use with
@@ -1426,8 +1461,10 @@ class SCRIPT(DIV):
         (fa, co) = self._xml()
         fa = to_bytes(fa)
         # no escaping of subcomponents
-        co = b'\n'.join([to_bytes(component) for component in
-                       self.components])
+        co = b'\n'.join(map(to_bytes,
+            # allow xml components (i.e. ASSIGNJS)
+            map(lambda c: c.xml() if hasattr(c, 'xml') and callable(c.xml) else c,
+            self.components)))
         if co:
             # <script [attributes]><!--//--><![CDATA[//><!--
             # script body

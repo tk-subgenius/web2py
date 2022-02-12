@@ -31,6 +31,7 @@ from pydal.objects import Table, Row, Expression, Field, Set, Rows
 from pydal.adapters.base import CALLABLETYPES
 from pydal.helpers.methods import smart_query, bar_encode, _repr_ref, merge_tablemaps
 from pydal.helpers.classes import Reference, SQLCustomType
+from pydal.default_validators import default_validators
 from gluon.storage import Storage
 from gluon.utils import md5_hash
 from gluon.validators import IS_EMPTY_OR, IS_NOT_EMPTY, IS_LIST_OF, IS_DATE
@@ -46,9 +47,8 @@ try:
 except ImportError:
     settings = {}
 
-widget_class = re.compile('^\w*')
 
-REGEX_ALIAS_MATCH = re.compile('^(.*) AS (.*)$')
+REGEX_WIDGET_CLASS = re.compile(r'^\w*')
 
 
 def add_class(a, b):
@@ -99,7 +99,7 @@ class CacheRepresenter(object):
                     nvalue = field.represent(value, row[field.tablename])
                 except KeyError:
                     nvalue = None
-            if isinstance(field, _repr_ref):
+            if isinstance(field.represent, _repr_ref):  # BKR ISSUE/2312 20200422
                 cache[field][value] = nvalue
         return nvalue
 
@@ -142,6 +142,34 @@ def show_if(cond):
     raise RuntimeError("Not Implemented Error")
 
 
+PLURALIZE_RULES = None
+
+def pluralize(singular, rules=None):
+    if rules is None:
+        global PLURALIZE_RULES
+        if PLURALIZE_RULES is None:
+            PLURALIZE_RULES = [
+    (re.compile('child$'), re.compile('child$'), 'children'),
+    (re.compile('oot$'), re.compile('oot$'), 'eet'),
+    (re.compile('ooth$'), re.compile('ooth$'), 'eeth'),
+    (re.compile('l[eo]af$'), re.compile('l([eo])af$'), 'l\\1aves'),
+    (re.compile('sis$'), re.compile('sis$'), 'ses'),
+    (re.compile('man$'), re.compile('man$'), 'men'),
+    (re.compile('ife$'), re.compile('ife$'), 'ives'),
+    (re.compile('eau$'), re.compile('eau$'), 'eaux'),
+    (re.compile('lf$'), re.compile('lf$'), 'lves'),
+    (re.compile('[sxz]$'), re.compile('$'), 'es'),
+    (re.compile('[^aeioudgkprt]h$'), re.compile('$'), 'es'),
+    (re.compile('(qu|[^aeiou])y$'), re.compile('y$'), 'ies'),
+    (re.compile('$'), re.compile('$'), 's'),
+            ]
+        rules = PLURALIZE_RULES
+    for line in rules:
+        re_search, re_sub, replace = line
+        plural = re_search.search(singular) and re_sub.sub(replace, singular)
+        if plural: return plural
+
+
 class FormWidget(object):
     """
     Helper for SQLFORM to generate form input fields (widget), related to the
@@ -164,7 +192,7 @@ class FormWidget(object):
         attr = dict(
             _id='%s_%s' % (field.tablename, field.name),
             _class=cls._class or
-                widget_class.match(str(field.type)).group(),
+                REGEX_WIDGET_CLASS.match(str(field.type)).group(),
             _name=field.name,
             requires=field.requires,
         )
@@ -433,7 +461,12 @@ class RadioWidget(OptionsWidget):
             opts.append(child(tds))
 
         if opts:
-            opts[-1][0][0]['hideerror'] = False
+            opts.append(
+                INPUT(requires=attr.get('requires', None),
+                      _style="display:none;",
+                      _disabled="disabled",
+                      _name=field.name,
+                      hideerror=False))
         return parent(*opts, **attr)
 
 
@@ -717,7 +750,7 @@ class AutocompleteWidget(object):
                             compact=table_rows.compact)
             elif settings and settings.global_settings.web2py_runtime_gae:
                 rows = self.db(field.__ge__(kword) &
-                               field.__lt__(kword + u'\ufffd')
+                               field.__lt__(kword + '\ufffd')
                                ).select(orderby=self.orderby,
                                         limitby=self.limitby,
                                         *(self.fields + self.help_fields))
@@ -1301,7 +1334,7 @@ class SQLFORM(FORM):
             # - user not trying to upload a new file
             # - there is existing file and user is not trying to delete it
             # this is because removing the file may not pass validation
-            for key in self.errors.keys():
+            for key in list(self.errors):
                 if key in self.table \
                         and self.table[key].type == 'upload' \
                         and request_vars.get(key, None) in (None, '') \
@@ -1415,8 +1448,7 @@ class SQLFORM(FORM):
             extra_field.table = table
             extra_field.tablename = table._tablename
             if extra_field.requires == DEFAULT:
-                from gluon.dal import _default_validators
-                extra_field.requires = _default_validators(table._db, extra_field)
+                extra_field.requires = default_validators(table._db, extra_field)
 
         for fieldname in self.fields:
             if fieldname.find('.') >= 0:
@@ -1473,7 +1505,7 @@ class SQLFORM(FORM):
             if readonly and not ignore_rw and not field.readable:
                 continue
 
-            if record:
+            if record and fieldname not in [x.name for x in extra_fields]:
                 default = record[fieldname]
             else:
                 default = field.default
@@ -1545,7 +1577,7 @@ class SQLFORM(FORM):
                 # SQLCustomType has a widget, use it
                 inp = field.type.widget(field, default)
             else:
-                field_type = widget_class.match(str(field.type)).group()
+                field_type = REGEX_WIDGET_CLASS.match(str(field.type)).group()
                 field_type = field_type in self.widgets and field_type or 'string'
                 inp = self.widgets[field_type].widget(field, default)
 
@@ -1791,7 +1823,7 @@ class SQLFORM(FORM):
                 if not field.widget and field.type.startswith('list:') and \
                         not OptionsWidget.has_options(field):
                     field.widget = self.widgets.list.widget
-                if field.widget and fieldname in request_vars:
+                if field.widget == self.widgets.list.widget and fieldname in request_vars:
                     if fieldname in self.request_vars:
                         value = self.request_vars[fieldname]
                     elif self.record:
@@ -1970,7 +2002,7 @@ class SQLFORM(FORM):
 
     AUTOTYPES = {
         type(''): ('string', None),
-        type(u''): ('string',None),
+        type(''): ('string',None),
         type(True): ('boolean', None),
         type(1): ('integer', IS_INT_IN_RANGE(-1e12, +1e12)),
         type(1.0): ('double', IS_FLOAT_IN_RANGE()),
@@ -2014,7 +2046,7 @@ class SQLFORM(FORM):
         to hold the fields.
         """
         # this is here to avoid circular references
-        from gluon.dal import DAL, _default_validators
+        from gluon.dal import DAL
         # Define a table name, this way it can be logical to our CSS.
         # And if you switch from using SQLFORM to SQLFORM.factory
         # your same css definitions will still apply.
@@ -2028,7 +2060,7 @@ class SQLFORM(FORM):
         # Clone fields, while passing tables straight through
         fields_with_clones = [f.clone() if isinstance(f, Field) else f for f in fields]
         dummy_dal = DAL(None)
-        dummy_dal.validators_method = lambda f: _default_validators(dummy_dal, f) # See https://github.com/web2py/web2py/issues/2007
+        dummy_dal.validators_method = lambda f: default_validators(dummy_dal, f) # See https://github.com/web2py/web2py/issues/2007
         return SQLFORM(dummy_dal.define_table(table_name, *fields_with_clones), **attributes)
 
     @staticmethod
@@ -2341,7 +2373,7 @@ class SQLFORM(FORM):
         create = wenabled and create
         editable = wenabled and editable
         deletable = wenabled and deletable
-        details = details and not groupby
+        details = not groupby and details
         rows = None
 
         # see issue 1980. Basically we can have keywords in get_vars
@@ -2404,6 +2436,12 @@ class SQLFORM(FORM):
             b['args'] = args + b.get('args', [])
             localvars = request.get_vars.copy()
             localvars.update(b.get('vars', {}))
+            # avoid empty keywords in vars
+            if localvars.get('keywords') == '':
+                del localvars['keywords']
+            # avoid propagating order=None in vars
+            if localvars.get('order') == 'None':
+                del localvars['order']
             b['vars'] = localvars
             b['hash_vars'] = False
             b['user_signature'] = user_signature
@@ -2433,7 +2471,7 @@ class SQLFORM(FORM):
 
         def gridbutton(buttonclass='buttonadd', buttontext=T('Add'),
                        buttonurl=url(args=[]), callback=None,
-                       delete=None, trap=True, noconfirm=None, title=None):
+                       delete=None, noconfirm=None, title=None):
             if showbuttontext:
                 return A(SPAN(_class=ui.get(buttonclass)), CAT(' '),
                          SPAN(T(buttontext), _title=title or T(buttontext),
@@ -2463,11 +2501,6 @@ class SQLFORM(FORM):
                 tablenames = merge_tablemaps(tablenames, db._adapter.tables(join))
         tables = [db[tablename] for tablename in tablenames]
         if fields:
-            # add missing tablename to virtual fields
-            for table in tables:
-                for k, f in iteritems(table):
-                    if isinstance(f, Field.Virtual):
-                        f.tablename = table._tablename
             columns = [f for f in fields if f.tablename in tablenames and f.listable]
         else:
             fields = []
@@ -2475,8 +2508,8 @@ class SQLFORM(FORM):
             filter1 = lambda f: isinstance(f, Field) and (f.type!='blob' or showblobs)
             filter2 = lambda f: isinstance(f, Field) and f.readable and f.listable
             for table in tables:
-                fields += filter(filter1, table)
-                columns += filter(filter2, table)
+                fields += list(filter(filter1, table))
+                columns += list(filter(filter2, table))
                 for k, f in iteritems(table):
                     if not k.startswith('_'):
                         if isinstance(f, Field.Virtual) and f.readable:
@@ -2562,7 +2595,7 @@ class SQLFORM(FORM):
             table = db[request.args[-2]]
             record = table(request.args[-1]) or redirect(referrer)
             if represent_none is not None:
-                for field in record.iterkeys():
+                for field in record.keys():
                     if record[field] is None:
                         record[field] = represent_none
             sqlformargs = dict(upload=upload, ignore_rw=ignore_rw,
@@ -2653,31 +2686,25 @@ class SQLFORM(FORM):
         if export_type:
             order = request.vars.order or ''
             if sortable:
-                if order and not order == 'None':
+                if order:
                     otablename, ofieldname = order.split('~')[-1].split('.', 1)
                     sort_field = db[otablename][ofieldname]
-                    exception = sort_field.type in ('date', 'datetime', 'time')
-                    if exception:
-                        orderby = (order[:1] == '~' and sort_field) or ~sort_field
-                    else:
-                        orderby = (order[:1] == '~' and ~sort_field) or sort_field
+                    orderby = sort_field if order[:1] != '~' else ~sort_field
 
             orderby = fix_orderby(orderby)
 
+            # expcolumns start with the visible columns, which
+            # includes visible virtual fields
             expcolumns = [str(f) for f in columns]
             selectable_columns = [str(f) for f in columns if not isinstance(f, Field.Virtual)]
             if export_type.endswith('with_hidden_cols'):
-                # expcolumns = [] start with the visible columns, which
-                # includes visible virtual fields
-                selectable_columns = []
-                # like expcolumns but excluding virtual
                 for table in tables:
                     for field in table:
                         if field.readable and field.tablename in tablenames:
                             if not str(field) in expcolumns:
                                 expcolumns.append(str(field))
-                            if not(isinstance(field, Field.Virtual)):
-                                selectable_columns.append(str(field))
+                                if not(isinstance(field, Field.Virtual)):
+                                    selectable_columns.append(str(field))
                     # look for virtual fields not displayed (and virtual method
                     # fields to be added here?)
                     for (field_name, field) in iteritems(table):
@@ -2691,7 +2718,7 @@ class SQLFORM(FORM):
                         # the query should be constructed using searchable
                         # fields but not virtual fields
                         is_searchable = lambda f: f.readable and not isinstance(f, Field.Virtual) and f.searchable
-                        sfields = reduce(lambda a, b: a + b, [filter(is_searchable, t) for t in tables])
+                        sfields = reduce(lambda a, b: a + b, [list(filter(is_searchable, t)) for t in tables])
                         # use custom_query using searchable
                         if callable(searchable):
                             dbset = dbset(searchable(sfields, keywords))
@@ -2699,13 +2726,13 @@ class SQLFORM(FORM):
                             dbset = dbset(SQLFORM.build_query(
                                 sfields, keywords))
                         rows = dbset.select(left=left, orderby=orderby,
-                                            cacheable=True, *expcolumns)
+                                            cacheable=True, *selectable_columns)
                     except Exception as e:
                         response.flash = T('Internal Error')
                         rows = []
                 else:
                     rows = dbset.select(left=left, orderby=orderby,
-                                        cacheable=True, *expcolumns)
+                                        cacheable=True, *selectable_columns)
 
                 value = exportManager[export_type]
                 clazz = value[0] if hasattr(value, '__getitem__') else value
@@ -2746,7 +2773,7 @@ class SQLFORM(FORM):
 
         if searchable:
             sfields = reduce(lambda a, b: a + b,
-                             [[f for f in t if f.readable] for t in tables])
+                             [[f for f in t if f.readable and f.searchable] for t in tables])
             if isinstance(search_widget, dict):
                 search_widget = search_widget[tablename]
             if search_widget == 'default':
@@ -2755,7 +2782,7 @@ class SQLFORM(FORM):
                 spanel_id = '%s_query_fields' % prefix
                 sfields_id = '%s_query_panel' % prefix
                 skeywords_id = '%s_keywords' % prefix
-                # hidden fields to presever keywords in url after the submit
+                # hidden fields to preserve keywords in url after the submit
                 hidden_fields = [INPUT(_type='hidden', _value=v, _name=k) for k, v in request.get_vars.items() if k not in ['keywords', 'page']]
                 search_widget = lambda sfield, url: CAT(FORM(
                     INPUT(_name='keywords', _value=keywords,
@@ -2771,14 +2798,17 @@ class SQLFORM(FORM):
             form = search_widget and search_widget(sfields, url()) or ''
             console.append(add)
             console.append(form)
-            try:
-                if callable(searchable):
-                    subquery = searchable(sfields, keywords)
-                else:
-                    subquery = SQLFORM.build_query(sfields, keywords)
-            except RuntimeError:
+            if keywords:
+                try:
+                    if callable(searchable):
+                        subquery = searchable(sfields, keywords)
+                    else:
+                        subquery = SQLFORM.build_query(sfields, keywords)
+                except RuntimeError:
+                    subquery = None
+                    error = T('Invalid query')
+            else:
                 subquery = None
-                error = T('Invalid query')
         else:
             subquery = None
 
@@ -2794,15 +2824,12 @@ class SQLFORM(FORM):
             console.append(DIV(additional_buttons))
 
         order = request.vars.order or ''
+        asc_icon, desc_icon = sorter_icons
         if sortable:
-            if order and not order == 'None':
+            if order:
                 otablename, ofieldname = order.split('~')[-1].split('.', 1)
                 sort_field = db[otablename][ofieldname]
-                exception = sort_field.type in ('date', 'datetime', 'time')
-                if exception:
-                    orderby = (order[:1] == '~' and sort_field) or ~sort_field
-                else:
-                    orderby = (order[:1] == '~' and ~sort_field) or sort_field
+                orderby = sort_field if order[:1] != '~' else ~sort_field
 
         headcols = []
         if selectable:
@@ -2815,33 +2842,30 @@ class SQLFORM(FORM):
             else:
                 headcols.append(TH(_class=ui.get('default')))
 
-        ordermatch, marker = orderby, ''
-        if orderby:
-            # if orderby is a single column, remember to put the marker
-            if isinstance(orderby, Expression):
-                if orderby.first and not orderby.second:
-                    ordermatch, marker = orderby.first, '~'
-        ordermatch = marker + str(ordermatch)
         for field in columns:
             if not field.readable:
                 continue
             key = str(field)
-            header = headers.get(str(field), field.label or key)
+            header = headers.get(key, field.label or key)
             if sortable and not isinstance(field, Field.Virtual):
                 marker = ''
-                if order:
-                    if key == order:
-                        key, marker = '~' + order, sorter_icons[0]
-                    elif key == order[1:]:
-                        marker = sorter_icons[1]
-                else:
-                    if key == ordermatch:
-                        key, marker = '~' + ordermatch, sorter_icons[0]
-                    elif key == ordermatch[1:]:
-                        marker = sorter_icons[1]
+                inverted = field.type in ('date', 'datetime', 'time')
+                if key == order.lstrip('~'):
+                    if inverted:
+                        if key == order:
+                            marker = asc_icon
+                        else:
+                            key, marker = order[1:], desc_icon
+                    else:
+                        if key == order:
+                            key, marker = '~' + order, asc_icon
+                        else:
+                            marker = desc_icon
+                elif inverted and key ==  str(field):
+                    key = '~' + key
                 header = A(header, marker, _href=url(vars=dict(
-                    keywords=keywords,
-                    order=key)), cid=request.cid)
+                            keywords=keywords,
+                            order=key)), cid=request.cid)
             headcols.append(TH(header, _class=ui.get('default')))
 
         toadd = []
@@ -2962,7 +2986,7 @@ class SQLFORM(FORM):
                 paginator.append(LI(self_link('<<', 0)))
             if page > NPAGES:
                 paginator.append(LI(self_link('<', page - 1)))
-            pages = range(max(0, page - NPAGES), min(page + NPAGES, npages))
+            pages = list(range(max(0, page - NPAGES), min(page + NPAGES, npages)))
             for p in pages:
                 if p == page:
                     paginator.append(LI(A(p + 1, _onclick='return false'),
@@ -3004,12 +3028,12 @@ class SQLFORM(FORM):
                         continue
                     elif field.type == 'blob' and not showblobs:
                         continue
-                    if isinstance(field, Field.Virtual) and field.tablename in row:
+                    if isinstance(field, Field.Virtual):
                         try:
                             # fast path, works for joins
                             value = row[field.tablename][field.name]
                         except KeyError:
-                            value = dbset.db[field.tablename][row[field.tablename][field_id]][field.name]
+                            value = dbset.db[field.tablename][row[field_id]][field.name]
                     else:
                         value = row[str(field)]
                     maxlength = maxtextlengths.get(str(field), maxtextlength)
@@ -3163,7 +3187,7 @@ class SQLFORM(FORM):
                 link = url2(vars=dict(
                     order=request.vars.order or '',
                     _export_type=k,
-                    keywords=keywords or ''))
+                    keywords=keywords))
                 export_links.append(A(T(label), _href=link, _title=title, _class='btn btn-default btn-secondary'))
             export_menu = \
                 DIV(T('Export:'), _class="w2p_export_menu", *export_links)
@@ -3244,7 +3268,8 @@ class SQLFORM(FORM):
                     return dict(form=form)
 
         """
-        request, T = current.request, current.T
+        request = current.request
+        T = current.T
         if args is None:
             args = []
 
@@ -3262,8 +3287,7 @@ class SQLFORM(FORM):
             links = {}
         if constraints is None:
             constraints = {}
-        field = None
-        name = None
+        field = name = None
 
         def format(table, row):
             if not row:
@@ -3274,10 +3298,14 @@ class SQLFORM(FORM):
                 return table._format(row)
             else:
                 return '#' + str(row.id)
+
+        def plural(table):
+            return table._plural or pluralize(table._singular.lower()).capitalize()
+
         try:
             nargs = len(args) + 1
-            previous_tablename, previous_fieldname, previous_id = \
-                table._tablename, None, None
+            previous_tablename = table._tablename
+            previous_fieldname = previous_id = None
             while len(request.args) > nargs:
                 key = request.args(nargs)
                 if '.' in key:
@@ -3298,11 +3326,12 @@ class SQLFORM(FORM):
                     if previous_id:
                         if record[previous_fieldname] != int(previous_id):
                             raise HTTP(400)
-                    previous_tablename, previous_fieldname, previous_id = \
-                        tablename, fieldname, id
+                    previous_tablename = tablename
+                    previous_fieldname = fieldname
+                    previous_id = id
                     name = format(db[referee], record)
                     breadcrumbs.append(
-                        LI(A(T(db[referee]._plural),
+                        LI(A(T(plural(db[referee])),
                              cid=request.cid,
                              _href=url()),
                            SPAN(divider, _class='divider'),
@@ -3348,6 +3377,8 @@ class SQLFORM(FORM):
             if isinstance(kwargs.get(key, None), dict):
                 if table._tablename in kwargs[key]:
                     kwargs[key] = kwargs[key][table._tablename]
+                elif '*' in kwargs[key]:
+                    kwargs[key] = kwargs[key]['*']
                 else:
                     del kwargs[key]
         check = {}
@@ -3381,8 +3412,8 @@ class SQLFORM(FORM):
                 if tb:
                     multiple_links = len(linked_fieldnames) > 1
                     for fieldname in linked_fieldnames:
-                        t = T(tb._plural) if not multiple_links else \
-                            T(tb._plural + '(' + fieldname + ')')
+                        t = T(plural(tb)) if not multiple_links else \
+                            T("%s(%s)" % (plural(tb), fieldname))
                         args0 = tablename + '.' + fieldname
                         linked.append(
                             lambda row, t=t, nargs=nargs, args0=args0:
@@ -3394,7 +3425,7 @@ class SQLFORM(FORM):
                             user_signature=user_signature, **kwargs)
 
         if isinstance(grid, DIV):
-            header = table._plural
+            header = plural(table)
             next = grid.create_form or grid.update_form or grid.view_form
             breadcrumbs.append(LI(
                     A(T(header), cid=request.cid, _href=url()),
@@ -3433,6 +3464,7 @@ class SQLTABLE(TABLE):
         linkto: URL (or lambda to generate a URL) to edit individual records
         upload: URL to download uploaded files
         orderby: Add an orderby link to column headers.
+        query: Query string to support orderby headers.
         headers: dictionary of headers to headers redefinions
             headers can also be a string to generate the headers from data
             for now only headers="fieldname:capitalize",
@@ -3461,11 +3493,14 @@ class SQLTABLE(TABLE):
 
     """
 
+    REGEX_ALIAS_MATCH = '^(.*) AS (.*)$'
+
     def __init__(self,
                  sqlrows,
                  linkto=None,
                  upload=None,
                  orderby=None,
+                 query='',
                  headers={},
                  truncate=16,
                  columns=None,
@@ -3486,16 +3521,22 @@ class SQLTABLE(TABLE):
         (components, row) = (self.components, [])
         if not sqlrows:
             return
-        REGEX_TABLE_DOT_FIELD = sqlrows.db._adapter.REGEX_TABLE_DOT_FIELD
-        fieldmap = dict(zip(sqlrows.colnames, sqlrows.fields))
-        tablemap = dict(((f.tablename, f.table) if isinstance(f, Field) else (f._table._tablename, f._table) for f in fieldmap.values()))
-        for table in tablemap.values():
-            pref = table._tablename + '.'
-            fieldmap.update(((pref+f.name, f) for f in table._virtual_fields))
-            fieldmap.update(((pref+f.name, f) for f in table._virtual_methods))
-        field_types = (Field, Field.Virtual, Field.Method)
-        if not columns:
+        fieldlist = sqlrows.colnames_fields
+        fieldmap = dict(zip(sqlrows.colnames, fieldlist))
+        if columns:
+            tablenames = []
+            for colname, field in fieldmap.items():
+                if isinstance(field, (Field, Field.Virtual)):
+                    tablenames.append(field.tablename)
+                elif isinstance(field, Expression):
+                    tablenames.append(field._table._tablename)
+            for tablename in set(tablenames):
+                table = sqlrows.db[tablename]
+                fieldmap.update((("%s.%s" % (tablename, f.name), f) for f in table._virtual_fields + table._virtual_methods))
+        else:
             columns = list(sqlrows.colnames)
+        field_types = (Field, Field.Virtual, Field.Method)
+
         header_func = {
             'fieldname:capitalize': lambda f: f.name.replace('_', ' ').title(),
             'labels': lambda f: f.label
@@ -3508,7 +3549,7 @@ class SQLTABLE(TABLE):
                 if isinstance(f, field_types):
                     headers[c] = make_name(f)
                 else:
-                    headers[c] = REGEX_ALIAS_MATCH.sub(r'\2', c)
+                    headers[c] = re.sub(self.REGEX_ALIAS_MATCH, r'\2', c)
         if colgroup:
             cols = [COL(_id=c.replace('.', '-'), data={'column': i + 1})
                     for i, c in enumerate(columns)]
@@ -3531,10 +3572,12 @@ class SQLTABLE(TABLE):
                         attrcol.update(_class=coldict['class'])
                     row.append(TH(coldict['label'], **attrcol))
                 elif orderby:
-                    row.append(TH(A(headers.get(c, c),
-                                    _href=th_link + '?orderby=' + c, cid=cid)))
+                    link = th_link + '?orderby=' + c
+                    if query:
+                        link += '&query=' + query
+                    row.append(TH(A(headers.get(c, c), _href=link, cid=cid)))
                 else:
-                    row.append(TH(headers.get(c, REGEX_ALIAS_MATCH.sub(r'\2', c))))
+                    row.append(TH(headers.get(c, re.sub(self.REGEX_ALIAS_MATCH, r'\2', c))))
 
             if extracolumns:  # new implement dict
                 for c in extracolumns:
@@ -3768,7 +3811,7 @@ class ExporterTSV(ExportClass):
     def __init__(self, rows):
         ExportClass.__init__(self, rows)
 
-    def export(self):  # export TSV with rows.represent
+    def export(self):  # export TSV with field.represent
         if self.rows:
             s = StringIO()
             self.rows.export_to_csv_file(s, represent=True,delimiter='\t',newline='\n')
@@ -3785,7 +3828,7 @@ class ExporterTSV_hidden(ExportClass):
     def __init__(self, rows):
         ExportClass.__init__(self, rows)
 
-    def export(self):  # export TSV with rows.represent
+    def export(self):
         if self.rows:
             s = StringIO()
             self.rows.export_to_csv_file(s,delimiter='\t',newline='\n')
@@ -3803,7 +3846,7 @@ class ExporterCSV(ExportClass):
     def __init__(self, rows):
         ExportClass.__init__(self, rows)
 
-    def export(self):  # export CSV with rows.represent
+    def export(self):  # export CSV with field.represent
         if self.rows:
             s = StringIO()
             self.rows.export_to_csv_file(s, represent=True)
