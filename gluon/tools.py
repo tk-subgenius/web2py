@@ -15,8 +15,9 @@ from functools import reduce
 from gluon._compat import pickle, thread, urllib2, Cookie, StringIO, urlencode
 from gluon._compat import configparser, MIMEBase, MIMEMultipart, MIMEText, Header
 from gluon._compat import Encoders, Charset, long, urllib_quote, iteritems
-from gluon._compat import to_bytes, to_native, add_charset
+from gluon._compat import to_bytes, to_native, add_charset, string_types
 from gluon._compat import charset_QP, basestring, unicodeT, to_unicode
+from gluon._compat import urllib2, urlopen
 import datetime
 import logging
 import sys
@@ -253,7 +254,7 @@ class Mail(object):
             self.my_payload = payload
             MIMEBase.__init__(self, *content_type.split('/', 1))
             self.set_payload(payload)
-            self['Content-Disposition'] = 'attachment; filename="%s"' % to_native(filename, encoding)
+            self['Content-Disposition'] = Header('attachment; filename="%s"' % to_native(filename, encoding), 'utf-8')
             if content_id is not None:
                 self['Content-Id'] = '<%s>' % to_native(content_id, encoding)
             Encoders.encode_base64(self)
@@ -453,6 +454,9 @@ class Mail(object):
                 to = [to]
         else:
             raise Exception('Target receiver address not specified')
+        if reply_to:
+            if not isinstance(reply_to, (list, tuple)):
+                reply_to = [reply_to]            
         if cc:
             if not isinstance(cc, (list, tuple)):
                 cc = [cc]
@@ -738,7 +742,7 @@ class Mail(object):
         if to:
             payload['To'] = encoded_or_raw(to_unicode(', '.join(to), encoding))
         if reply_to:
-            payload['Reply-To'] = encoded_or_raw(to_unicode(reply_to, encoding))
+            payload['Reply-To'] = encoded_or_raw(to_unicode(', '.join(reply_to), encoding))
         if cc:
             payload['Cc'] = encoded_or_raw(to_unicode(', '.join(cc), encoding))
             to.extend(cc)
@@ -815,7 +819,15 @@ class Mail(object):
                         server.login(*self.settings.login.split(':', 1))
                     result = server.sendmail(sender, to, payload.as_string())
                 finally:
-                    server.quit()
+                    # do not want to hide errors raising some exception here
+                    try:
+                        server.quit()
+                    except smtplib.SMTPException:
+                        # ensure to close any socket with SMTP server
+                        try:
+                            server.close()
+                        except Exception:
+                            pass
         except Exception as e:
             logger.warning('Mail.send failure:%s' % e)
             self.result = result
@@ -902,13 +914,13 @@ class Recaptcha2(DIV):
             'secret': self.private_key,
             'remoteip': remoteip,
             'response': recaptcha_response_field,
-        })
+        }).encode('utf-8')
         request = urllib2.Request(
             url=self.VERIFY_SERVER,
             data=to_bytes(params),
             headers={'Content-type': 'application/x-www-form-urlencoded',
                      'User-agent': 'reCAPTCHA Python'})
-        httpresp = urllib2.urlopen(request)
+        httpresp = urlopen(request)
         content = httpresp.read()
         httpresp.close()
         try:
@@ -983,15 +995,15 @@ def addrow(form, a, b, c, style, _id, position=-1):
                                      DIV(b, SPAN(c, _class='inline-help'),
                                          _class='controls'),
                                      _class='control-group', _id=_id))
-    elif style == "bootstrap3_inline":
+    elif style in ("bootstrap3_inline", "bootstrap4_inline"):
         form[0].insert(position, DIV(LABEL(a, _class='control-label col-sm-3'),
                                      DIV(b, SPAN(c, _class='help-block'),
                                          _class='col-sm-9'),
-                                     _class='form-group', _id=_id))
-    elif style == "bootstrap3_stacked":
+                                     _class='form-group row', _id=_id))
+    elif style in ("bootstrap3_stacked", "bootstrap4_stacked"):
         form[0].insert(position, DIV(LABEL(a, _class='control-label'),
                                      b, SPAN(c, _class='help-block'),
-                                     _class='form-group', _id=_id))
+                                     _class='form-group row', _id=_id))
     else:
         form[0].insert(position, TR(TD(LABEL(a), _class='w2p_fl'),
                                     TD(b, _class='w2p_fw'),
@@ -1037,7 +1049,7 @@ class AuthJWT(object):
                              Example:
                              def mybefore_authorization(tokend):
                                  if not tokend['my_name_is'] == 'bond,james bond':
-                                     raise HTTP(400, u'Invalid JWT my_name_is claim')
+                                     raise HTTP(400, 'Invalid JWT my_name_is claim')
      - max_header_length: check max length to avoid load()ing unusually large tokens (could mean crafted, e.g. in a DDoS.)
 
     Basic Usage:
@@ -1161,7 +1173,7 @@ class AuthJWT(object):
         b64h, b64b = body.split(b'.', 1)
         if b64h != self.cached_b64h:
             # header not the same
-            raise HTTP(400, u'Invalid JWT Header')
+            raise HTTP(400, 'Invalid JWT Header')
         secret = self.secret_key
         tokend = serializers.loads_json(to_native(self.jwt_b64d(b64b)))
         if self.salt:
@@ -1172,11 +1184,11 @@ class AuthJWT(object):
         secret = to_bytes(secret, 'ascii', 'ignore')
         if not self.verify_signature(body, sig, secret):
             # signature verification failed
-            raise HTTP(400, u'Token signature is invalid')
+            raise HTTP(400, 'Token signature is invalid')
         if self.verify_expiration:
             now = time.mktime(datetime.datetime.utcnow().timetuple())
             if tokend['exp'] + self.leeway < now:
-                raise HTTP(400, u'Token is expired')
+                raise HTTP(400, 'Token is expired')
         if callable(self.before_authorization):
             self.before_authorization(tokend)
         return tokend
@@ -1209,11 +1221,11 @@ class AuthJWT(object):
             orig_exp = orig_payload['exp']
             if orig_exp + self.leeway < now:
                 # token already expired, can't be used for refresh
-                raise HTTP(400, u'Token already expired')
+                raise HTTP(400, 'Token already expired')
         orig_iat = orig_payload.get('orig_iat') or orig_payload['iat']
         if orig_iat + self.refresh_expiration_delta < now:
             # refreshed too long ago
-            raise HTTP(400, u'Token issued too long ago')
+            raise HTTP(400, 'Token issued too long ago')
         expires = now + self.expiration
         orig_payload.update(
             orig_iat=orig_iat,
@@ -1259,7 +1271,7 @@ class AuthJWT(object):
             pass
         if token:
             if not self.allow_refresh:
-                raise HTTP(403, u'Refreshing token is not allowed')
+                raise HTTP(403, 'Refreshing token is not allowed')
             tokend = self.load_token(token)
             # verification can fail here
             refreshed = self.refresh_token(tokend)
@@ -1277,9 +1289,9 @@ class AuthJWT(object):
             ret = {'token': self.generate_token(payload)}
         elif ret is None:
             raise HTTP(401,
-                       u'Not Authorized - need to be logged in, to pass a token '
-                       u'for refresh or username and password for login',
-                       **{'WWW-Authenticate': u'JWT realm="%s"' % self.realm})
+                       'Not Authorized - need to be logged in, to pass a token '
+                       'for refresh or username and password for login',
+                       **{'WWW-Authenticate': 'JWT realm="%s"' % self.realm})
         response.headers['Content-Type'] = 'application/json'
         return serializers.json(ret)
 
@@ -1303,9 +1315,9 @@ class AuthJWT(object):
         if token_in_header:
             parts = token_in_header.split()
             if parts[0].lower() != self.header_prefix.lower():
-                raise HTTP(400, u'Invalid JWT header')
+                raise HTTP(400, 'Invalid JWT header')
             elif len(parts) == 1:
-                raise HTTP(400, u'Invalid JWT header, missing token')
+                raise HTTP(400, 'Invalid JWT header, missing token')
             elif len(parts) > 2:
                 raise HTTP(400, 'Invalid JWT header, token contains spaces')
             token = parts[1]
@@ -1753,7 +1765,7 @@ class Auth(AuthAPI):
         # _next variable in the request.
         if next:
             parts = next.split('/')
-            if ':' not in parts[0]:
+            if ':' not in parts[0] and parts[:2] != ['', '']:
                 return next
             elif len(parts) > 2 and parts[0].endswith(':') and parts[1:3] == ['', host]:
                 return next
@@ -2243,11 +2255,11 @@ class Auth(AuthAPI):
         if basic_auth_realm:
             if callable(basic_auth_realm):
                 basic_auth_realm = basic_auth_realm()
-            elif isinstance(basic_auth_realm, (unicode, str)):
-                basic_realm = unicode(basic_auth_realm)  # Warning python 3.5 does not have method unicod
+            elif isinstance(basic_auth_realm, string_types):
+                basic_realm = to_unicode(basic_auth_realm)
             elif basic_auth_realm is True:
-                basic_realm = u'' + current.request.application
-            http_401 = HTTP(401, u'Not Authorized', **{'WWW-Authenticate': u'Basic realm="' + basic_realm + '"'})
+                basic_realm = '' + current.request.application
+            http_401 = HTTP(401, 'Not Authorized', **{'WWW-Authenticate': 'Basic realm="' + basic_realm + '"'})
         if not basic or not basic[:6].lower() == 'basic ':
             if basic_auth_realm:
                 raise http_401
@@ -2260,9 +2272,9 @@ class Auth(AuthAPI):
 
     def _get_login_settings(self):
         table_user = self.table_user()
-        userfield = self.settings.login_userfield or 'username' \
+        userfield = self.settings.login_userfield or ('username' \
             if self.settings.login_userfield or 'username' \
-            in table_user.fields else 'email'
+            in table_user.fields else 'email')
         passfield = self.settings.password_field
         return Storage({'table_user': table_user,
                         'userfield': userfield,
@@ -2300,7 +2312,7 @@ class Auth(AuthAPI):
         # in this case they will have to reset their password to login
         if fields.get(settings.passfield):
             fields[settings.passfield] = \
-                settings.table_user[settings.passfield].validate(fields[settings.passfield])[0]
+                settings.table_user[settings.passfield].validate(fields[settings.passfield], None)[0]
         if not fields.get(settings.userfield):
             raise ValueError('register_bare: userfield not provided or invalid')
         user = self.get_or_create_user(fields, login=False, get=False,
@@ -2637,9 +2649,7 @@ class Auth(AuthAPI):
                         # invalid login
                         session.flash = specific_error if self.settings.login_specify_error else self.messages.invalid_login
                         callback(onfail, None)
-                        redirect(
-                            self.url(args=request.args, vars=request.get_vars),
-                            client_side=settings.client_side)
+                        redirect(self.url(args=request.args, vars=request.get_vars),client_side=settings.client_side)
 
             else:  # use a central authentication server
                 cas = settings.login_form
@@ -3172,12 +3182,12 @@ class Auth(AuthAPI):
                         formname='retrieve_password', dbio=False,
                         onvalidation=onvalidation, hideerror=self.settings.hideerror):
             user = table_user(email=form.vars.email)
-            key = user.registration_key
             if not user:
                 current.session.flash = \
                     self.messages.invalid_email
                 redirect(self.url(args=request.args))
-            elif key in ('pending', 'disabled', 'blocked') or (key or '').startswith('pending'):
+            key = user.registration_key
+            if key in ('pending', 'disabled', 'blocked') or (key or '').startswith('pending'):
                 current.session.flash = \
                     self.messages.registration_pending
                 redirect(self.url(args=request.args))
@@ -3574,7 +3584,7 @@ class Auth(AuthAPI):
         requires = table_user[passfield].requires
         if not isinstance(requires, (list, tuple)):
             requires = [requires]
-        requires = list(filter(lambda t: isinstance(t, CRYPT), requires))
+        requires = [t for t in requires if isinstance(t, CRYPT)]
         if requires:
             requires[0] = CRYPT(**requires[0].__dict__) # Copy the existing CRYPT attributes
             requires[0].min_length = 0 # But do not enforce minimum length for the old password
@@ -3660,14 +3670,15 @@ class Auth(AuthAPI):
                         onvalidation=onvalidation,
                         hideerror=self.settings.hideerror):
             extra_fields = self.settings.extra_fields.get(self.settings.table_user_name, [])
-            if any(f.compute for f in extra_fields):
-                user = table_user[self.user.id]
-                self._update_session_user(user)
-                self.update_groups()
-            else:
-                self.user.update(table_user._filter_fields(form.vars))
-            session.flash = self.messages.profile_updated
-            self.log_event(log, self.user)
+            if not form.deleted:
+                if any(f.compute for f in extra_fields):
+                    user = table_user[self.user.id]
+                    self._update_session_user(user)
+                    self.update_groups()
+                else:
+                    self.user.update(table_user._filter_fields(form.vars))
+                session.flash = self.messages.profile_updated
+                self.log_event(log, self.user)
             callback(onaccept, form)
             if form.deleted:
                 return self.logout()
@@ -3726,7 +3737,7 @@ class Auth(AuthAPI):
         are passed to the constructor of class AuthJWT. Look there for documentation.
         """
         if not self.jwt_handler:
-            raise HTTP(400, "Not authorized")
+            raise HTTP(401, "Not authorized")
         else:
             rtn = self.jwt_handler.jwt_token_manager()
             raise HTTP(200, rtn, cookies=None, **current.response.headers)
@@ -3820,7 +3831,7 @@ class Auth(AuthAPI):
 
     def allows_jwt(self, otherwise=None):
         if not self.jwt_handler:
-            raise HTTP(400, "Not authorized")
+            raise HTTP(401, "Not authorized")
         else:
             return self.jwt_handler.allows_jwt(otherwise=otherwise)
 
@@ -3922,7 +3933,7 @@ class Auth(AuthAPI):
             return self.has_permission(name, table_name, record_id)
         return self.requires(has_permission, otherwise=otherwise)
 
-    def requires_signature(self, otherwise=None, hash_vars=True):
+    def requires_signature(self, otherwise=None, hash_vars=True, hash_extension=True):
         """
         Decorator that prevents access to action if not logged in or
         if user logged in is not a member of group_id.
@@ -3930,7 +3941,7 @@ class Auth(AuthAPI):
         group_id is calculated.
         """
         def verify():
-            return URL.verify(current.request, user_signature=True, hash_vars=hash_vars)
+            return URL.verify(current.request, user_signature=True, hash_vars=hash_vars, hash_extension=True)
         return self.requires(verify, otherwise)
 
     def accessible_query(self, name, table, user_id=None):
@@ -4614,7 +4625,6 @@ class Crud(object):  # pragma: no cover
                 results = None
         return form, results
 
-
 urllib2.install_opener(urllib2.build_opener(urllib2.HTTPCookieProcessor()))
 
 
@@ -4632,7 +4642,7 @@ def fetch(url, data=None, headers=None,
         from google.appengine.api import urlfetch
     except ImportError:
         req = urllib2.Request(url, data, headers)
-        html = urllib2.urlopen(req).read()
+        html = urlopen(req).read()
     else:
         method = ((data is None) and urlfetch.GET) or urlfetch.POST
         while url is not None:
@@ -5000,7 +5010,7 @@ class Service(object):
             elif r and not isinstance(r, types.GeneratorType) and isinstance(r[0], (dict, Storage)):
                 import csv
                 writer = csv.writer(s)
-                writer.writerow(r[0].keys())
+                writer.writerow(list(r[0].keys()))
                 for line in r:
                     writer.writerow([none_exception(v)
                                      for v in line.values()])
@@ -5217,7 +5227,7 @@ class Service(object):
     def serve_xmlrpc(self):
         request = current.request
         response = current.response
-        services = self.xmlrpc_procedures.values()
+        services = list(self.xmlrpc_procedures.values())
         return response.xmlrpc(request, services)
 
     def serve_amfrpc(self, version=0):
@@ -5572,7 +5582,7 @@ class PluginManager(object):
         return self.__dict__[key]
 
     def keys(self):
-        return self.__dict__.keys()
+        return list(self.__dict__.keys())
 
     def __contains__(self, key):
         return key in self.__dict__
@@ -5606,9 +5616,6 @@ class Expose(object):
                          and file creation under `base`.
 
         """
-        # why would this not be callable? but otherwise tests do not pass
-        if current.session and callable(current.session.forget):
-            current.session.forget()
         self.follow_symlink_out = follow_symlink_out
         self.base = self.normalize_path(
             base or os.path.join(current.request.folder, 'static'))
@@ -5818,7 +5825,7 @@ class Wiki(object):
         settings.templates = templates
         settings.controller = controller
         settings.function = function
-        settings.groups = auth.user_groups.values() \
+        settings.groups = list(auth.user_groups.values()) \
             if groups is None else groups
 
         db = auth.db
@@ -5914,7 +5921,7 @@ class Wiki(object):
         if (auth.user and
             check_credentials(current.request, gae_login=False) and
             'wiki_editor' not in auth.user_groups.values() and
-                self.settings.groups == auth.user_groups.values()):
+                self.settings.groups == list(auth.user_groups.values())):
             group = db.auth_group(role='wiki_editor')
             gid = group.id if group else db.auth_group.insert(
                 role='wiki_editor')

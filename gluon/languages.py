@@ -16,14 +16,12 @@ import re
 import sys
 import pkgutil
 import logging
-from cgi import escape
 from threading import RLock
 
-from gluon.utils import local_html_escape
-
-from gluon._compat import copyreg, PY2, maketrans, iterkeys, unicodeT, to_unicode, to_bytes, iteritems, to_native, pjoin
-
+from pydal._compat import copyreg, PY2, maketrans, iterkeys, unicodeT, to_unicode, to_bytes, iteritems, to_native, pjoin
 from pydal.contrib.portalocker import read_locked, LockedFile
+
+from yatl.sanitizer import xmlescape
 
 from gluon.fileutils import listdir
 from gluon.cfs import getcfs
@@ -326,7 +324,7 @@ def write_plural_dict(filename, contents):
 
 
 def sort_function(x):
-    return unicode(x, 'utf-8').lower()
+    return to_unicode(x, 'utf-8').lower()
 
 
 def write_dict(filename, contents):
@@ -393,6 +391,12 @@ class lazyT(object):
     def __eq__(self, other):
         return str(self) == str(other)
 
+    def __lt__(self, other):
+        return str(self) < str(other)
+
+    def __gt__(self, other):
+        return str(self) > str(other)
+
     def __ne__(self, other):
         return str(self) != str(other)
 
@@ -428,7 +432,7 @@ class lazyT(object):
         return len(str(self))
 
     def xml(self):
-        return str(self) if self.M else local_html_escape(str(self), quote=False)
+        return str(self) if self.M else xmlescape(str(self), quote=False)
 
     def encode(self, *a, **b):
         if PY2 and a[0] != 'utf8':
@@ -452,12 +456,12 @@ class lazyT(object):
 
 
 def pickle_lazyT(c):
-    return str, (c.xml(),)
+    return str, (to_native(c.xml()),)
 
 copyreg.pickle(lazyT, pickle_lazyT)
 
 
-class translator(object):
+class TranslatorFactory(object):
     """
     This class is instantiated by gluon.compileapp.build_environment
     as the T object
@@ -742,8 +746,8 @@ class translator(object):
         try:
             otherT = self.otherTs[index]
         except KeyError:
-            otherT = self.otherTs[index] = translator(self.langpath,
-                                                      self.http_accept_language)
+            otherT = self.otherTs[index] = TranslatorFactory(self.langpath,
+                                                             self.http_accept_language)
             if language:
                 otherT.force(language)
         return otherT

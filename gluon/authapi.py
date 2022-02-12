@@ -803,7 +803,7 @@ class AuthAPI(object):
 
         # Finally verify the password
         passfield = settings.password_field
-        password = table_user[passfield].validate(kwargs.get(passfield, ''))[0]
+        password = table_user[passfield].validate(kwargs.get(passfield, ''), None)[0]
 
         if password == user[passfield]:
             self.login_user(user)
@@ -988,7 +988,7 @@ class AuthAPI(object):
         requires = table_user[passfield].requires
         if not isinstance(requires, (list, tuple)):
             requires = [requires]
-        requires = list(filter(lambda t: isinstance(t, CRYPT), requires))
+        requires = [t for t in requires if isinstance(t, CRYPT)]
         if requires:
             requires[0] = CRYPT(**requires[0].__dict__) # Copy the existing CRYPT attributes
             requires[0].min_length = 0 # But do not enforce minimum length for the old password

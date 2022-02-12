@@ -6,7 +6,10 @@ from gluon.fileutils import read_file
 from gluon.utils import web2py_uuid
 from pydal.contrib import portalocker
 # ###########################################################
-# ## make sure administrator is on localhost or https
+# ## make sure administrator is on localhost or https,
+# ## or from
+# ## gluon.settings.global_settings.trusted_lan_prefix
+# ## subnet
 # ###########################################################
 
 
@@ -24,7 +27,14 @@ dev_flag_file = os.path.join(os.path.join(request.folder,"..","..","DEV.flag"))
 
 if request.is_https:
     session.secure()
+<<<<<<< HEAD
 elif not os.path.isfile(dev_flag_file)  and not request.is_local and not DEMO_MODE:
+=======
+elif request.env.trusted_lan_prefix and \
+     request.client.startswith(request.env.trusted_lan_prefix):
+    request.is_local = True
+elif not request.is_local and not DEMO_MODE:
+>>>>>>> 70bd81412ec9ad2387f1386e402b37ce6b57b4ad
     raise HTTP(200, T('Admin is disabled because insecure channel'))
 
 try:
